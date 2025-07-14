@@ -32,6 +32,7 @@
 
     <string name="pkg_source_grapheneos">GrapheneOS</string>
     <string name="pkg_source_grapheneos_build">GrapheneOS build</string>
+    <string name="pkg_source_fossify">Fossify</string>
     <string name="pkg_source_mirror">Mirror</string>
     <string name="pkg_source_google">Google (mirror)</string>
 

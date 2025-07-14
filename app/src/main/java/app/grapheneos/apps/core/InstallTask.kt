@@ -65,7 +65,7 @@ class InstallTask(
     val callbackBeforeCommit: (suspend () -> Unit)?,
 ) {
     val downloadProgress = AtomicLong()
-    val downloadTotal = apks.sumOf { it.compressedSize }
+    val downloadTotal = apks.sumOf { if (it.isRegularApk) it.size else it.compressedSize }
 
     init {
         checkMainThread()
@@ -246,7 +246,11 @@ class InstallTask(
     }
 
     private suspend fun obtainAndWriteApk(apk: Apk, session: Session) {
-        val file = File(apksDir, "${apk.name}.gz")
+        val file = if (apk.isRegularApk) {
+            File(apksDir, apk.name)
+        } else {
+            File(apksDir, "${apk.name}.gz")
+        }
         val path = file.path
         val tmpPath = "$path.tmp"
 
@@ -258,11 +262,15 @@ class InstallTask(
         }?.let {
             ScopedFileDescriptor(it).use { fd ->
                 val curSize = Os.fstat(fd.v).st_size
-                val fullSize = apk.compressedSize
+                val fullSize = if (apk.isRegularApk) apk.size else apk.compressedSize
                 // apk is already fully downloaded
                 if (curSize == fullSize) {
                     downloadProgress.getAndAdd(curSize)
-                    uncompressAndWriteApk(fd.v, apk, session)
+                    if (apk.isRegularApk) {
+                        writeApkDirectly(fd.v, apk, session)
+                    } else {
+                        uncompressAndWriteApk(fd.v, apk, session)
+                    }
                     return
                 }
 
@@ -277,11 +285,15 @@ class InstallTask(
                     check(Os.lseek(tmpFd.v, 0L, SEEK_CUR) == curSize)
                     downloadProgress.getAndAdd(curSize)
                     try {
-                        download(apk.downloadUrl(), tmpFd.v, curSize, fullSize)
+                        download(apk.downloadUrl, tmpFd.v, curSize, fullSize)
                     } finally {
                         fsyncAndRename(tmpFd.v, tmpPath, path)
                     }
-                    uncompressAndWriteApk(tmpFd.v, apk, session)
+                    if (apk.isRegularApk) {
+                        writeApkDirectly(tmpFd.v, apk, session)
+                    } else {
+                        uncompressAndWriteApk(tmpFd.v, apk, session)
+                    }
                 }
             }
             return
@@ -290,11 +302,15 @@ class InstallTask(
         // cached apk not found
         openTempFileFd(tmpPath).use { tmpFd ->
             try {
-                download(apk.downloadUrl(), tmpFd.v, curSize = 0L, apk.compressedSize)
+                download(apk.downloadUrl, tmpFd.v, curSize = 0L, if (apk.isRegularApk) apk.size else apk.compressedSize)
             } finally {
                 fsyncAndRename(tmpFd.v, tmpPath, path)
             }
-            uncompressAndWriteApk(tmpFd.v, apk, session)
+            if (apk.isRegularApk) {
+                writeApkDirectly(tmpFd.v, apk, session)
+            } else {
+                uncompressAndWriteApk(tmpFd.v, apk, session)
+            }
         }
     }
 
@@ -419,6 +435,66 @@ class InstallTask(
             }
 
             FileInputStream(uncompressedFd.v).use { inputStream ->
+            session.openWrite(apk.name, 0, apk.size).use { outputStream ->
+                inputStream.copyTo2(outputStream, job)
+            }}
+        }
+    }
+
+    private fun writeApkDirectly(fd: FileDescriptor, apk: Apk, session: Session) {
+        lseekToStart(fd)
+
+        val sha256 = MessageDigest.getInstance("SHA-256")
+
+        makeTemporaryFileDescriptor().use { tmpFd ->
+            FileInputStream(fd).use { inputStream ->
+                DigestOutputStream(FileOutputStream(tmpFd.v), sha256).use { outputStream ->
+                    inputStream.copyTo2(outputStream, job)
+                }
+            }
+
+            if (!sha256.digest().contentEquals(apk.sha256)) {
+                throw GeneralSecurityException("sha256 mismatch for file ${apk.name}")
+            }
+
+            lseekToStart(tmpFd.v)
+
+            if (apk.pkg.common.noCode || apk.pkg.common.isSharedLibrary) {
+                // see dupToPfd comment to see why dup is even needed
+                tmpFd.dupToPfd().use {
+                    // there's no public variant of getPackageArchiveInfo() that accepts a file descriptor
+                    val pkgInfo = pkgManager.getPackageArchiveInfo("/proc/self/fd/${it.getFd()}", 0L)!!
+
+                    // enforce that packages that declare that they don't have code declare it in their
+                    // AndroidManifest too. OS won't run any code from packages that have hasCode="false"
+                    // directive in their manifest
+                    if (apk.pkg.common.noCode) {
+                        val appInfo = pkgInfo.applicationInfo
+                        if (appInfo == null || (appInfo.flags and ApplicationInfo.FLAG_HAS_CODE) != 0) {
+                            throw GeneralSecurityException("${apk.pkg.packageName}: ${apk.name} should have " +
+                                    "hasCode=\"false\" attribute in its AndroidManifest")
+                        }
+                    }
+
+                    // don't allow abusing isSharedLibrary property to bypass app install confirmation
+                    // requirement
+                    if (apk.pkg.common.isSharedLibrary) {
+                        // there's no equivalent public API as of SDK 34
+                        @SuppressLint("DiscouragedPrivateApi")
+                        val privateFlagsField = ApplicationInfo::class.java.getDeclaredField("privateFlags")
+                        val privateFlags = privateFlagsField.get(pkgInfo.applicationInfo) as Int
+                        val PRIVATE_FLAG_STATIC_SHARED_LIBRARY = 1 shl 14
+                        if ((privateFlags and PRIVATE_FLAG_STATIC_SHARED_LIBRARY) == 0) {
+                            throw GeneralSecurityException("${apk.pkg.packageName}: " +
+                                    "${apk.name} is not a static shared library")
+                        }
+                    }
+
+                }
+                lseekToStart(tmpFd.v)
+            }
+
+            FileInputStream(tmpFd.v).use { inputStream ->
             session.openWrite(apk.name, 0, apk.size).use { outputStream ->
                 inputStream.copyTo2(outputStream, job)
             }}

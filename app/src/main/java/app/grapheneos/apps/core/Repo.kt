@@ -37,7 +37,7 @@ import java.util.Locale
 
 const val REPO_BASE_URL = BuildConfig.REPO_BASE_URL
 
-class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
+class Repo(val json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
     val timestamp = json.getLong("time")
 
     val groups = mutableMapOf<String, RPackageGroup>()
@@ -71,6 +71,22 @@ class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
         }
 
         for (manifestPackageName in packagesJson.keys()) {
+
+            if (manifestPackageName == "app.accrescent.client") {
+                json.remove("app.accrescent.client")
+                continue
+            }
+
+            if (manifestPackageName == "app.attestation.auditor") {
+                json.remove("app.accrescent.client")
+                continue
+            }
+
+            if (manifestPackageName == "app.grapheneos.info") {
+                json.remove("app.grapheneos.info")
+                continue
+            }
+
             val packageContainerJson = packagesJson.getJSONObject(manifestPackageName)
 
             if (!checkStaticDeps(packageContainerJson, this)) {
@@ -142,6 +158,7 @@ fun findRPackage(variants: List<RPackage>, channel: ReleaseChannel): RPackage {
 enum class PackageSource(@StringRes val uiName: Int) {
     GrapheneOS(R.string.pkg_source_grapheneos),
     GrapheneOS_build(R.string.pkg_source_grapheneos_build),
+    Fossify(R.string.pkg_source_fossify),
     Mirror(R.string.pkg_source_mirror),
     Google(R.string.pkg_source_google),
 }
@@ -191,12 +208,18 @@ class RPackageContainer(val repo: Repo, val packageName: String,
 
     val iconUrl: String? = run {
         val iconType = json.opt("iconType") as String?
-        if (iconType != null) {
+        val iconUrl = json.opt("iconUrl") as String?
+        if (iconUrl != null) {
+            iconUrl
+        } else if (iconType != null) {
             "$REPO_BASE_URL/packages/$manifestPackageName/icon.$iconType"
-        } else {
+        }
+        else {
             null
         }
     }
+
+    val downloadUrl: String? = json.optString("downloadUrl", null)
 
     // Used for setting release channel for packages that are closely linked together.
     // This allows to significantly simplify the dependency resolution process (otherwise release
@@ -486,7 +509,11 @@ class Apk(
         }
     }
 
-    fun downloadUrl() = "$REPO_BASE_URL/packages/${pkg.manifestPackageName}/${pkg.versionCode}/$name.gz"
+    val downloadUrl: String = pkg.common.downloadUrl ?: "$REPO_BASE_URL/packages/${pkg.manifestPackageName}/${pkg.versionCode}/$name.gz"
+
+    val isRegularApk = downloadUrl.endsWith(".apk")
+
+    // val compressedSize = if (isRegularApk) size else _compressedSize
 
     enum class Type {
         UNCONDITIONAL,

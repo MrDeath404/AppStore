@@ -53,7 +53,7 @@ class PackageState(val pkgName: String, val id: Long) {
     fun getDownloadSizeUiString(): String {
         cachedDownloadSize?.let { return it }
 
-        val size = rPackage.collectNeededApks(appResources.configuration).sumOf { it.compressedSize }
+        val size = rPackage.collectNeededApks(appResources.configuration).sumOf { if (it.isRegularApk) it.size else it.compressedSize }
         Formatter.formatShortFileSize(appContext, size).let {
             cachedDownloadSize = it
             return it
