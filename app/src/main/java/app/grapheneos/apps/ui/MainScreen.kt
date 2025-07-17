@@ -2,20 +2,20 @@ package app.grapheneos.apps.ui
 
 import android.content.Intent
 import android.os.Bundle
-import android.view.ContextMenu
 import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
-import android.view.View
 import android.view.ViewGroup
 import androidx.core.view.MenuProvider
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
+import androidx.lifecycle.MutableLiveData
 import app.grapheneos.apps.BuildConfig
 import app.grapheneos.apps.PackageStates
 import app.grapheneos.apps.R
 import app.grapheneos.apps.core.RepoUpdateError
+import app.grapheneos.apps.core.PackageSource
 import app.grapheneos.apps.core.mainHandler
 import app.grapheneos.apps.databinding.MainScreenBinding
 import app.grapheneos.apps.util.intent
@@ -29,9 +29,21 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import java.util.EnumSet
+import com.google.android.material.chip.Chip
 
 open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
     override val menuXml = R.menu.main_screen_menu
+
+    private val selectedSourcesSet: EnumSet<PackageSource> = EnumSet.noneOf(PackageSource::class.java)
+
+    val selectedSources = MutableLiveData(selectedSourcesSet)
+
+    private lateinit var srcFilters: Map<Chip, PackageSource>
+
+    private fun hasPackagesForSource(source: PackageSource): Boolean {
+        return packages.values.any { it.rPackage.source == source }
+    }
 
     override fun inflate(inflater: LayoutInflater, container: ViewGroup?, attach: Boolean) =
         MainScreenBinding.inflate(inflater, container, attach)
@@ -49,6 +61,29 @@ open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
         views.swipeRefreshContainer.setOnRefreshListener {
             CoroutineScope(Dispatchers.Main).launch {
                 PackageStates.requestRepoUpdate(force = true, isManuallyRequested = true)
+            }
+        }
+
+        srcFilters = mapOf(
+            views.pkgSourceGrapheneOS to PackageSource.GrapheneOS,
+            views.pkgSourceLineageos to PackageSource.LineageOS,
+            views.pkgSourceMirror to PackageSource.Mirror,
+            views.pkgSourceGoogle to PackageSource.Google,
+            views.pkgSourceGrapheneOSBuild to PackageSource.GrapheneOS_build,
+        )
+
+        selectedSources.observe(viewLifecycleOwner) { filters ->
+            val allSelected = filters.size == srcFilters.size
+            srcFilters.forEach {
+                it.key.isChecked = if (allSelected) false else filters.contains(it.value)
+            }
+            updateList()
+        }
+
+        srcFilters.forEach {
+            it.key.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) selectedSourcesSet.add(it.value) else selectedSourcesSet.remove(it.value)
+                selectedSources.value = selectedSourcesSet
             }
         }
 
@@ -110,12 +145,11 @@ open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
     }
 
     override fun updateList() {
+        srcFilters.forEach { (chip, source) ->
+            chip.isVisible = hasPackagesForSource(source)
+        }
         val list = packages.values.filter {
-            if (this::class == MainScreen::class) {
-                it.rPackage.common.isTopLevel
-            } else {
-                true
-            }
+            selectedSourcesSet.contains(it.rPackage.source)
         }.sortedWith { a, b ->
             val pkg1 = a.rPackage
             val pkg2 = b.rPackage

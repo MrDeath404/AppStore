@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.os.postDelayed
+import androidx.core.view.isVisible
 import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.MutableLiveData
@@ -13,9 +14,16 @@ import app.grapheneos.apps.core.mainHandler
 import app.grapheneos.apps.databinding.SearchScreenBinding
 import app.grapheneos.apps.util.requestKeyboard
 import java.util.EnumSet
+import com.google.android.material.chip.Chip
 
 class SearchScreen : PackageListFragment<SearchScreenBinding>() {
     private val model by viewModels<SearchScreenVM>()
+
+    private lateinit var srcFilters: Map<Chip, PackageSource>
+
+    private fun hasPackagesForSource(source: PackageSource): Boolean {
+        return packages.values.any { it.rPackage.source == source }
+    }
 
     class SearchScreenVM : ViewModel() {
         var searchQuery = MutableLiveData("")
@@ -57,7 +65,7 @@ class SearchScreen : PackageListFragment<SearchScreenBinding>() {
             updateList()
         }
 
-        val srcFilters = mapOf(
+        srcFilters = mapOf(
             views.pkgSourceGrapheneOS to PackageSource.GrapheneOS,
             views.pkgSourceLineageos to PackageSource.LineageOS,
             views.pkgSourceMirror to PackageSource.Mirror,
@@ -81,6 +89,9 @@ class SearchScreen : PackageListFragment<SearchScreenBinding>() {
     }
 
     override fun updateList() {
+        srcFilters.forEach { (chip, source) ->
+            chip.isVisible = hasPackagesForSource(source)
+        }
         val selectedSources = model.selectedSources.value!!
         val query = model.searchQuery.value!!
         val list = packages.values.filter {
