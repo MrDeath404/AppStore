@@ -13,13 +13,16 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
-import java.net.HttpURLConnection
+import java.io.IOException
 import java.net.HttpURLConnection.HTTP_NOT_MODIFIED
 import java.net.HttpURLConnection.HTTP_OK
+import java.net.InetAddress
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.GeneralSecurityException
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import okhttp3.Dns
 
 private const val METADATA_VERSION = 1
 private const val CACHE_FILE_VERSION = 1
@@ -30,57 +33,54 @@ private const val KEY_VERSION = BuildConfig.REPO_KEY_VERSION
 
 private val cacheFile = AtomicFile2("repo")
 
-@Throws(Exception::class)
-fun fetchGitHubRawJson(url: String, minTimestamp: Long): Repo {
-    val client = OkHttpClient()
+val client = OkHttpClient.Builder()
+    .dns(object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> =
+            InetAddress.getAllByName(hostname).filter { it.address.size == 4 }
+    })
+    .build()
 
+fun fetchGitHubRawJson(url: String, minTimestamp: Long): Repo {
     val request = Request.Builder()
         .url(url)
         .build()
 
     client.newCall(request).execute().use { response ->
         if (!response.isSuccessful) {
-            throw Exception("Failed to fetch data: ${response.code}")
+            throw IOException("Failed to fetch data: ${response.code}")
         }
-
         val eTag = response.header("ETag") ?: ""
-
-        val jsonString = response.body?.string() ?: throw Exception("Empty response body")
-
-        val repo = Repo(JSONObject(jsonString), eTag)
-
+        val jsonString = response.body?.string() ?: throw IOException("Empty response body")
+        val json = JSONObject(jsonString)
+        val repo = Repo(json, eTag)
         if (repo.timestamp < minTimestamp) {
-            throw Exception("repo downgrade detected")
+            throw Exception("Repo downgrade detected")
         }
-
         return repo
     }
 }
 
 fun fetchOrginalRepo(currentRepo: Repo, url: String): Repo {
-    return if (!currentRepo.isDummy) {
-        openConnection(null, url) {
-            setRequestProperty("If-None-Match", currentRepo.eTag)
-        }.use { conn ->
-            when (conn.v.responseCode) {
-                HTTP_OK -> {
-                    fetchInner(conn.v,
-                        // in case MIN_TIMESTAMP was updated
-                        maxOf(currentRepo.timestamp, MIN_TIMESTAMP))
-                }
-                HTTP_NOT_MODIFIED -> {
-                    currentRepo
-                }
-                else -> throwResponseCodeException(conn.v)
-            }
-        }
-    } else {
-        openConnection(null, url, {}).use { conn ->
-            if (conn.v.responseCode != HTTP_OK) {
-                throwResponseCodeException(conn.v)
-            }
+    val requestBuilder = Request.Builder()
+        .url(url)
 
-            fetchInner(conn.v, MIN_TIMESTAMP)
+    if (!currentRepo.isDummy) {
+        requestBuilder.header("If-None-Match", currentRepo.eTag)
+    }
+
+    val request = requestBuilder.build()
+
+    client.newCall(request).execute().use { response ->
+        when (response.code) {
+            HTTP_OK -> {
+                return fetchInner(response, maxOf(currentRepo.timestamp, MIN_TIMESTAMP))
+            }
+            HTTP_NOT_MODIFIED -> {
+                return currentRepo
+            }
+            else -> {
+                throw IOException("HTTP error code: ${response.code}")
+            }
         }
     }
 }
@@ -126,12 +126,11 @@ fun fetchRepo(currentRepo: Repo): Repo {
     }
 }
 
-private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
-    val eTag = conn.getHeaderField("ETag") ?: ""
+@Throws(IOException::class, GeneralSecurityException::class)
+private fun fetchInner(response: Response, minTimestamp: Long): Repo {
+    val eTag = response.header("ETag") ?: ""
 
-    val unverifiedBytes = conn.inputStream.use {
-        it.readBytes()
-    }
+    val unverifiedBytes = response.body?.bytes() ?: throw IOException("Empty response body")
 
     // format:
     // JSON as UTF-8 string
@@ -140,9 +139,8 @@ private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
     // 1 byte of newline
 
     val unverifiedJson: ByteArray = unverifiedBytes.copyOfRange(0, unverifiedBytes.size - 102)
-    val signature: String =
-        unverifiedBytes.copyOfRange(unverifiedBytes.size - 101, unverifiedBytes.size - 1)
-            .toString(UTF_8)
+    val signature: String = unverifiedBytes.copyOfRange(unverifiedBytes.size - 101, unverifiedBytes.size - 1)
+        .toString(UTF_8)
 
     FileVerifier(PUBLIC_KEY).verifySignature(unverifiedJson, signature)
 

@@ -56,11 +56,11 @@
                 android:text="@string/pkg_source_grapheneos" />
 
             <com.google.android.material.chip.Chip
-                android:id="@+id/pkg_source_Fossify"
+                android:id="@+id/pkg_source_lineageos"
                 style="@style/Widget.Material3.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/pkg_source_fossify" />
+                android:text="@string/pkg_source_lineageos" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/pkg_source_Mirror"

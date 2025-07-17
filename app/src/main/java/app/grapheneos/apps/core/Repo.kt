@@ -34,6 +34,7 @@ import java.io.ByteArrayInputStream
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Locale
+import okhttp3.Request
 
 const val REPO_BASE_URL = BuildConfig.REPO_BASE_URL
 
@@ -71,6 +72,11 @@ class Repo(val json: JSONObject, val eTag: String, val isDummy: Boolean = false)
         }
 
         for (manifestPackageName in packagesJson.keys()) {
+
+            if (manifestPackageName == "app.grapheneos.apps") {
+                json.remove("app.grapheneos.apps")
+                continue
+            }
 
             if (manifestPackageName == "app.accrescent.client") {
                 json.remove("app.accrescent.client")
@@ -158,7 +164,7 @@ fun findRPackage(variants: List<RPackage>, channel: ReleaseChannel): RPackage {
 enum class PackageSource(@StringRes val uiName: Int) {
     GrapheneOS(R.string.pkg_source_grapheneos),
     GrapheneOS_build(R.string.pkg_source_grapheneos_build),
-    Fossify(R.string.pkg_source_fossify),
+    LineageOS(R.string.pkg_source_lineageos),
     Mirror(R.string.pkg_source_mirror),
     Google(R.string.pkg_source_google),
 }
@@ -207,19 +213,59 @@ class RPackageContainer(val repo: Repo, val packageName: String,
     }.toTypedArray()
 
     val iconUrl: String? = run {
-        val iconType = json.opt("iconType") as String?
-        val iconUrl = json.opt("iconUrl") as String?
+        val iconUrl = json.opt("iconUrl") as? String
         if (iconUrl != null) {
-            iconUrl
-        } else if (iconType != null) {
-            "$REPO_BASE_URL/packages/$manifestPackageName/icon.$iconType"
+            return@run iconUrl
         }
         else {
-            null
+            val iconType = json.opt("iconType") as? String
+            if (iconType != null) {
+                return@run "$REPO_BASE_URL/packages/$manifestPackageName/icon.$iconType"
+            }
+        }
+        null
+    }
+
+    val repoUrl: String? = json.opt("repoUrl") as String?
+
+    var autoHashes: String? = null
+    var autoSizes: String? = null
+
+    val downloadUrl: String? = run {
+        if (repoUrl == null) {
+            json.optString("downloadUrl", null)
+        } else {
+            val apiUrl = repoUrl
+                .replace("https://github.com/", "https://api.github.com/repos/")
+                .replace("/releases/latest", "/releases/latest")
+
+            if (apiUrl.isEmpty()) {
+                throw IllegalArgumentException("repoUrl is null or invalid")
+            }
+
+            val request = Request.Builder().url(apiUrl).build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw Exception("Failed to fetch latest release info: ${response.code}")
+
+                val json = JSONObject(response.body!!.string())
+                val assets = json.getJSONArray("assets")
+
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    val name = asset.getString("name")
+                    if (name.endsWith(".apk")) {
+                        autoHashes = asset.optString("digest", "None").replace("sha256:", "")
+                        autoSizes = asset.optString("size", "0")
+                        return@run asset.getString("browser_download_url")
+                    }
+                }
+                null
+            }
         }
     }
 
-    val downloadUrl: String? = json.optString("downloadUrl", null)
+    val isRegularApk: Boolean = downloadUrl?.endsWith(".apk") ?: false
 
     // Used for setting release channel for packages that are closely linked together.
     // This allows to significantly simplify the dependency resolution process (otherwise release
@@ -329,9 +375,17 @@ class RPackage(val common: RPackageContainer, val versionCode: Long, repo: Repo,
 
     val apks: List<Apk> = run {
         val names = json.getJSONArray("apks")
-        val hashes = json.getJSONArray("apkHashes")
-        val sizes = json.getJSONArray("apkSizes")
-        val gzSizes = json.getJSONArray("apkGzSizes")
+        val hashes = if (common.autoHashes != null) {
+            JSONArray().put(common.autoHashes)
+        } else {
+            json.getJSONArray("apkHashes")
+        }
+        val sizes = if (common.autoSizes != null) {
+            JSONArray(common.autoSizes)
+        } else {
+            json.getJSONArray("apkSizes")
+        }
+        val gzSizes = if (common.isRegularApk) sizes else json.getJSONArray("apkGzSizes")
 
         val len = names.length()
         require(hashes.length() == len)
@@ -510,10 +564,6 @@ class Apk(
     }
 
     val downloadUrl: String = pkg.common.downloadUrl ?: "$REPO_BASE_URL/packages/${pkg.manifestPackageName}/${pkg.versionCode}/$name.gz"
-
-    val isRegularApk = downloadUrl.endsWith(".apk")
-
-    // val compressedSize = if (isRegularApk) size else _compressedSize
 
     enum class Type {
         UNCONDITIONAL,

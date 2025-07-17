@@ -65,7 +65,7 @@ class InstallTask(
     val callbackBeforeCommit: (suspend () -> Unit)?,
 ) {
     val downloadProgress = AtomicLong()
-    val downloadTotal = apks.sumOf { if (it.isRegularApk) it.size else it.compressedSize }
+    val downloadTotal = apks.sumOf { it.compressedSize }
 
     init {
         checkMainThread()
@@ -246,7 +246,7 @@ class InstallTask(
     }
 
     private suspend fun obtainAndWriteApk(apk: Apk, session: Session) {
-        val file = if (apk.isRegularApk) {
+        val file = if (apk.pkg.common.isRegularApk) {
             File(apksDir, apk.name)
         } else {
             File(apksDir, "${apk.name}.gz")
@@ -262,11 +262,11 @@ class InstallTask(
         }?.let {
             ScopedFileDescriptor(it).use { fd ->
                 val curSize = Os.fstat(fd.v).st_size
-                val fullSize = if (apk.isRegularApk) apk.size else apk.compressedSize
+                val fullSize = apk.compressedSize
                 // apk is already fully downloaded
                 if (curSize == fullSize) {
                     downloadProgress.getAndAdd(curSize)
-                    if (apk.isRegularApk) {
+                    if (apk.pkg.common.isRegularApk) {
                         writeApkDirectly(fd.v, apk, session)
                     } else {
                         uncompressAndWriteApk(fd.v, apk, session)
@@ -289,7 +289,7 @@ class InstallTask(
                     } finally {
                         fsyncAndRename(tmpFd.v, tmpPath, path)
                     }
-                    if (apk.isRegularApk) {
+                    if (apk.pkg.common.isRegularApk) {
                         writeApkDirectly(tmpFd.v, apk, session)
                     } else {
                         uncompressAndWriteApk(tmpFd.v, apk, session)
@@ -302,11 +302,11 @@ class InstallTask(
         // cached apk not found
         openTempFileFd(tmpPath).use { tmpFd ->
             try {
-                download(apk.downloadUrl, tmpFd.v, curSize = 0L, if (apk.isRegularApk) apk.size else apk.compressedSize)
+                download(apk.downloadUrl, tmpFd.v, curSize = 0L, apk.compressedSize)
             } finally {
                 fsyncAndRename(tmpFd.v, tmpPath, path)
             }
-            if (apk.isRegularApk) {
+            if (apk.pkg.common.isRegularApk) {
                 writeApkDirectly(tmpFd.v, apk, session)
             } else {
                 uncompressAndWriteApk(tmpFd.v, apk, session)
