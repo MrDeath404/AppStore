@@ -73,16 +73,22 @@ open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
         )
 
         selectedSources.observe(viewLifecycleOwner) { filters ->
-            val allSelected = filters.size == srcFilters.size
             srcFilters.forEach {
-                it.key.isChecked = if (allSelected) false else filters.contains(it.value)
+                it.key.isChecked = filters.contains(it.value)
             }
             updateList()
         }
 
-        srcFilters.forEach {
-            it.key.setOnCheckedChangeListener { _, isChecked ->
-                if (isChecked) selectedSourcesSet.add(it.value) else selectedSourcesSet.remove(it.value)
+        srcFilters.forEach { entry ->
+            entry.key.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    // Clear all selections and add only this one
+                    selectedSourcesSet.clear()
+                    selectedSourcesSet.add(entry.value)
+                } else {
+                    // Remove this selection
+                    selectedSourcesSet.remove(entry.value)
+                }
                 selectedSources.value = selectedSourcesSet
             }
         }
@@ -149,7 +155,7 @@ open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
             chip.isVisible = hasPackagesForSource(source)
         }
         val list = packages.values.filter {
-            selectedSourcesSet.contains(it.rPackage.source)
+            selectedSourcesSet.contains(it.rPackage.source) && it.rPackage.common.isTopLevel
         }.sortedWith { a, b ->
             val pkg1 = a.rPackage
             val pkg2 = b.rPackage

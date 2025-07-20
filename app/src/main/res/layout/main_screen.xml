@@ -46,35 +46,40 @@
                 style="@style/Widget.Material3.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/pkg_source_grapheneos" />
+                android:text="@string/pkg_source_grapheneos"
+                app:checkedIcon="@null" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/pkg_source_lineageos"
                 style="@style/Widget.Material3.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/pkg_source_lineageos" />
+                android:text="@string/pkg_source_lineageos"
+                app:checkedIcon="@null" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/pkg_source_Mirror"
                 style="@style/Widget.Material3.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/pkg_source_mirror" />
+                android:text="@string/pkg_source_mirror"
+                app:checkedIcon="@null" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/pkg_source_Google"
                 style="@style/Widget.Material3.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/pkg_source_google" />
+                android:text="@string/pkg_source_google"
+                app:checkedIcon="@null" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/pkg_source_GrapheneOS_Build"
                 style="@style/Widget.Material3.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/pkg_source_grapheneos_build" />
+                android:text="@string/pkg_source_grapheneos_build"
+                app:checkedIcon="@null" />
 
         </com.google.android.material.chip.ChipGroup>
 
