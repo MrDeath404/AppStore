@@ -40,18 +40,24 @@ val client = OkHttpClient.Builder()
     })
     .build()
 
-fun fetchGitHubRawJson(url: String, minTimestamp: Long): Repo {
+fun fetchGitHubRaw(url: String): Response {
     val request = Request.Builder()
         .url(url)
         .build()
 
-    client.newCall(request).execute().use { response ->
+    return client.newCall(request).execute()
+}
+
+fun getRepoFromGithubRaw(response: Response, minTimestamp: Long): Repo {
+    response.use {
         if (!response.isSuccessful) {
             throw IOException("Failed to fetch data: ${response.code}")
         }
-        val eTag = response.header("ETag") ?: ""
+
         val jsonString = response.body?.string() ?: throw IOException("Empty response body")
         val json = JSONObject(jsonString)
+        val eTag = response.header("ETag") ?: ""
+
         val repo = Repo(json, eTag)
         if (repo.timestamp < minTimestamp) {
             throw Exception("Repo downgrade detected")
@@ -112,8 +118,8 @@ fun mergeRepos(originalRepo: Repo, customRepo: Repo): Repo {
 fun fetchRepo(currentRepo: Repo): Repo {
     val url = "$REPO_BASE_URL/metadata.$METADATA_VERSION.$KEY_VERSION.sjson"
 
-    val customRepo = fetchGitHubRawJson(
-        "https://raw.githubusercontent.com/MrDeath404/DryBlood-Client-Packages/refs/heads/main/packages-list.json",
+    val customRepo = getRepoFromGithubRaw(
+        fetchGitHubRaw("https://raw.githubusercontent.com/MrDeath404/DryBlood-Client-Packages/refs/heads/main/packages-list.json"),
         MIN_TIMESTAMP
     )
 
